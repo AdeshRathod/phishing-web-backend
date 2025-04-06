@@ -1,0 +1,39 @@
+# Python Bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual Environment
+venv/
+env/
+
+# Distribution / Packaging
+*.egg-info/
+*.egg
+dist/
+build/
+
+# IDE/Editor Files
+.vscode/
+.idea/
+*.swp
+
+# Python's Test, Coverage and Debugging Files
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+*.coveragerc
+coverage.xml
+nosetests.xml
+*.cover
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Python virtualenv
+*.env/
+
+# Environment Variables
+.env
