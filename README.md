@@ -7,23 +7,29 @@ A Flask API for detecting phishing websites using a machine learning model train
 ## 🚀 How to Run
 
 1. **Create a virtual environment (optional but recommended):**
+
    ```bash
    python -m venv venv
    source venv/bin/activate  # Linux/macOS
    venv\Scripts\activate     # Windows
+
+   if didnt work follow the below command
+
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+   venv\Scripts\Activate.ps1
+
+
    ```
 
-    pip install -r requirements.txt
+   pip install -r requirements.txt
 
-python app.py
+2. Train Your model
 
-# 📁 3. Folder Changes
+   run below command
 
-You should move:
+   python train_model.py
 
-- `model/train_model.py` ➔ move it into a new folder `scripts/`
+3. Start the server
 
-```bash
-mkdir scripts
-move model\train_model.py scripts\
-```
+   python app.py
