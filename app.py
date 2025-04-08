@@ -49,6 +49,174 @@
 
 ## multiple dataset# app.py
 
+# from flask import Flask, request, jsonify
+# from flask_cors import CORS
+# import os
+# import pickle
+# import pandas as pd
+# import requests
+# import whois
+# import base64
+# from datetime import datetime
+# from urllib.parse import urlparse
+# from utils import extract_features_dict
+# from concurrent.futures import ThreadPoolExecutor
+# from urllib.parse import urlparse
+
+# # Constants
+# MODEL_PATH = os.path.join('models', 'final_model.pkl')
+# VIRUSTOTAL_API_KEY = "44ca818a7925714131cbd49429118a812f3fd6c92c6832d02236eb7f0ae0b8c0"
+# GOOGLE_API_KEY = "AIzaSyAecmHb85bCr3Ywfkvi3ZnJNvN3Faeej9U"
+
+# # Initialize app
+# app = Flask(__name__)
+# CORS(app)
+
+# # Helper Functions
+
+# def url_to_id(url):
+#     """
+#     Converts URL into VirusTotal's URL ID format (base64-encoded).
+#     """
+#     return base64.urlsafe_b64encode(url.encode()).decode().strip("=")
+
+# def check_google_safe_browsing(api_key, url):
+#     """
+#     Checks URL against Google Safe Browsing API.
+#     """
+#     api_url = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={api_key}"
+#     body = {
+#         "client": {
+#             "clientId": "phishing-detector",
+#             "clientVersion": "1.0"
+#         },
+#         "threatInfo": {
+#             "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "POTENTIALLY_HARMFUL_APPLICATION"],
+#             "platformTypes": ["ANY_PLATFORM"],
+#             "threatEntryTypes": ["URL"],
+#             "threatEntries": [{"url": url}]
+#         }
+#     }
+#     try:
+#         response = requests.post(api_url, json=body)
+#         if response.status_code == 200:
+#             result = response.json()
+#             return result != {}
+#         else:
+#             print(f"Safe Browsing API error: {response.status_code}")
+#             return False
+#     except Exception as e:
+#         print(f"Safe Browsing Exception: {e}")
+#         return False
+
+# def check_virustotal(api_key, url):
+#     """
+#     Checks URL using VirusTotal API.
+#     """
+#     headers = {
+#         "x-apikey": api_key
+#     }
+#     url_id = url_to_id(url)
+#     api_url = f"https://www.virustotal.com/api/v3/urls/{url_id}"
+#     try:
+#         response = requests.get(api_url, headers=headers)
+#         if response.status_code == 200:
+#             result = response.json()
+#             malicious_votes = result['data']['attributes']['last_analysis_stats']['malicious']
+#             return malicious_votes > 0
+#         else:
+#             print(f"VirusTotal API error: {response.status_code}")
+#             return False
+#     except Exception as e:
+#         print(f"VirusTotal Exception: {e}")
+#         return False
+
+# def domain_age_in_days(url):
+#     """
+#     Returns the age of the domain in days.
+#     """
+#     try:
+#         parsed_url = urlparse(url)
+#         domain_info = whois.whois(parsed_url.netloc)
+#         creation_date = domain_info.creation_date
+#         if isinstance(creation_date, list):
+#             creation_date = creation_date[0]
+#         if creation_date:
+#             age = (datetime.now() - creation_date).days
+#             return age
+#         else:
+#             return -1
+#     except Exception as e:
+#         print(f"WHOIS failed: {e}")
+#         return -1
+
+# # Load ML Model
+# try:
+#     with open(MODEL_PATH, 'rb') as f:
+#         model = pickle.load(f)
+#     print("✅ Model loaded successfully.")
+# except Exception as e:
+#     model = None
+#     print(f"❌ Failed to load model: {e}")
+
+# # Routes
+
+# @app.route('/', methods=['GET'])
+# def home():
+#     return jsonify({'message': 'Phishing Detection API is running.'})
+
+# @app.route('/predict', methods=['POST'])
+# def predict():
+#     if model is None:
+#         return jsonify({'error': 'Model not loaded.'}), 500
+
+#     data = request.get_json()
+#     if not data or 'url' not in data:
+#         return jsonify({'error': 'Missing "url" in request.'}), 400
+
+#     url = data['url']
+
+#     try:
+#         features = extract_features_dict(url)
+#         features_df = pd.DataFrame([features])
+
+#         with ThreadPoolExecutor(max_workers=3) as executor:
+#             safe_browsing_future = executor.submit(check_google_safe_browsing, GOOGLE_API_KEY, url)
+#             virustotal_future = executor.submit(check_virustotal, VIRUSTOTAL_API_KEY, url)
+#             domain_age_future = executor.submit(domain_age_in_days, url)
+
+#             safe_browsing_flag = safe_browsing_future.result()
+#             virustotal_flag = virustotal_future.result()
+#             domain_age = domain_age_future.result()
+
+#         # Final decision
+#         if safe_browsing_flag or virustotal_flag or (domain_age != -1 and domain_age < 30):
+#             final_prediction = "Phishing (External Verification)"
+#         else:
+#             prediction = model.predict(features_df)[0]
+#             final_prediction = "Phishing" if prediction == 1 else "Legitimate"
+
+#         # 🆕 Include external API results in the response
+#         response = {
+#             'prediction': final_prediction,
+#             'external_checks': {
+#                 'safe_browsing_detected': safe_browsing_flag,
+#                 'virustotal_detected': virustotal_flag,
+#                 'domain_age_days': domain_age,
+#                 'domain_age_check_success': domain_age
+#             }
+#         }
+
+#         return jsonify(response)
+
+#     except Exception as e:
+#         return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
+
+# # Run the app
+# if __name__ == '__main__':
+#     app.run(host='0.0.0.0', port=5000, debug=True)
+
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
@@ -56,12 +224,14 @@ import pickle
 import pandas as pd
 import requests
 import whois
+import ssl
+import csv
+import socket
 import base64
 from datetime import datetime
 from urllib.parse import urlparse
 from utils import extract_features_dict
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse
 
 # Constants
 MODEL_PATH = os.path.join('models', 'final_model.pkl')
@@ -73,17 +243,34 @@ app = Flask(__name__)
 CORS(app)
 
 # Helper Functions
-
 def url_to_id(url):
-    """
-    Converts URL into VirusTotal's URL ID format (base64-encoded).
-    """
     return base64.urlsafe_b64encode(url.encode()).decode().strip("=")
 
+def load_tranco_list():
+    domains = set()
+    try:
+        with open('tranco_LJL44.csv', 'r') as f:
+            reader = csv.reader(f)
+            next(reader)  # skip header
+            for row in reader:
+                domains.add(row[1].lower())  # row[1] is domain
+    except Exception as e:
+        print(f"Failed to load Tranco list: {e}")
+    return domains
+
+TRANCOLIST_DOMAINS = load_tranco_list()
+
+def check_tranco_rank(url):
+    try:
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc.lower()
+        domain = domain.lstrip('www.')
+        return domain in TRANCOLIST_DOMAINS
+    except Exception as e:
+        print(f"Tranco rank check failed: {e}")
+        return False
+
 def check_google_safe_browsing(api_key, url):
-    """
-    Checks URL against Google Safe Browsing API.
-    """
     api_url = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={api_key}"
     body = {
         "client": {
@@ -91,7 +278,13 @@ def check_google_safe_browsing(api_key, url):
             "clientVersion": "1.0"
         },
         "threatInfo": {
-            "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "POTENTIALLY_HARMFUL_APPLICATION"],
+            "threatTypes": [
+                "MALWARE",
+                "SOCIAL_ENGINEERING",
+                "POTENTIALLY_HARMFUL_APPLICATION",
+                "UNWANTED_SOFTWARE",
+                "THREAT_TYPE_UNSPECIFIED"
+            ],
             "platformTypes": ["ANY_PLATFORM"],
             "threatEntryTypes": ["URL"],
             "threatEntries": [{"url": url}]
@@ -99,9 +292,10 @@ def check_google_safe_browsing(api_key, url):
     }
     try:
         response = requests.post(api_url, json=body)
+        print(f"Safe Browsing Raw Response: {response.text}")  # print raw response here
         if response.status_code == 200:
             result = response.json()
-            return result != {}
+            return result.get('matches') is not None
         else:
             print(f"Safe Browsing API error: {response.status_code}")
             return False
@@ -109,10 +303,25 @@ def check_google_safe_browsing(api_key, url):
         print(f"Safe Browsing Exception: {e}")
         return False
 
+def check_openphish(url):
+    try:
+        # Fetch the latest OpenPhish feed (public feed)
+        feed_url = "https://openphish.com/feed.txt"
+        response = requests.get(feed_url, timeout=10)
+        if response.status_code == 200:
+            feed_urls = response.text.splitlines()
+            # Normalize the URL (remove trailing slash, lowercase, etc.)
+            normalized_url = url.rstrip('/').lower()
+            return any(normalized_url in line.lower() for line in feed_urls)
+        else:
+            print(f"OpenPhish feed fetch failed: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"OpenPhish check failed: {e}")
+        return False
+
+
 def check_virustotal(api_key, url):
-    """
-    Checks URL using VirusTotal API.
-    """
     headers = {
         "x-apikey": api_key
     }
@@ -120,6 +329,8 @@ def check_virustotal(api_key, url):
     api_url = f"https://www.virustotal.com/api/v3/urls/{url_id}"
     try:
         response = requests.get(api_url, headers=headers)
+        # print("VirusTotal Raw Response:", response.json())
+
         if response.status_code == 200:
             result = response.json()
             malicious_votes = result['data']['attributes']['last_analysis_stats']['malicious']
@@ -132,9 +343,6 @@ def check_virustotal(api_key, url):
         return False
 
 def domain_age_in_days(url):
-    """
-    Returns the age of the domain in days.
-    """
     try:
         parsed_url = urlparse(url)
         domain_info = whois.whois(parsed_url.netloc)
@@ -150,6 +358,26 @@ def domain_age_in_days(url):
         print(f"WHOIS failed: {e}")
         return -1
 
+def check_ssl_expiry(hostname):
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, 443)) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                cert = ssock.getpeercert()
+                expiry_date = datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
+                remaining_days = (expiry_date - datetime.utcnow()).days
+                return remaining_days
+    except Exception as e:
+        print(f"SSL check failed: {e}")
+        return -1
+
+def unwrap_shortlink(url):
+    try:
+        response = requests.head(url, allow_redirects=True)
+        return response.url
+    except:
+        return url
+
 # Load ML Model
 try:
     with open(MODEL_PATH, 'rb') as f:
@@ -160,7 +388,6 @@ except Exception as e:
     print(f"❌ Failed to load model: {e}")
 
 # Routes
-
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({'message': 'Phishing Detection API is running.'})
@@ -180,30 +407,72 @@ def predict():
         features = extract_features_dict(url)
         features_df = pd.DataFrame([features])
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
             safe_browsing_future = executor.submit(check_google_safe_browsing, GOOGLE_API_KEY, url)
             virustotal_future = executor.submit(check_virustotal, VIRUSTOTAL_API_KEY, url)
             domain_age_future = executor.submit(domain_age_in_days, url)
+            openphish_future = executor.submit(check_openphish, url)
+            tranco_rank_future = executor.submit(check_tranco_rank, url)
 
             safe_browsing_flag = safe_browsing_future.result()
             virustotal_flag = virustotal_future.result()
             domain_age = domain_age_future.result()
+            openphish_flag = openphish_future.result()
+            tranco_flag = tranco_rank_future.result()
 
-        # Final decision
-        if safe_browsing_flag or virustotal_flag or (domain_age != -1 and domain_age < 30):
-            final_prediction = "Phishing (External Verification)"
+        reasoning = []
+        external_flags = [safe_browsing_flag, virustotal_flag, openphish_flag]
+        final_label = ""
+        probability = None
+
+        # External checks first
+        if any(external_flags):
+            final_label = "Phishing (External Verification)"
+            probability = 0.99
+            if safe_browsing_flag:
+                reasoning.append("Detected by Google Safe Browsing.")
+            if virustotal_flag:
+                reasoning.append("Detected as malicious by VirusTotal.")
+            if openphish_flag:
+                reasoning.append("Listed in OpenPhish feed.")
         else:
+            # No external flags -> rely on model prediction
             prediction = model.predict(features_df)[0]
-            final_prediction = "Phishing" if prediction == 1 else "Legitimate"
+            proba = model.predict_proba(features_df)[0]
+            base_probability = float(proba[1])  # Model phishing probability
 
-        # 🆕 Include external API results in the response
+            # Adjust probability based on domain age and tranco rank
+            adjustment = 0
+            if domain_age != -1 and domain_age < 30:
+                adjustment += 0.10  # Increase probability by 10%
+                reasoning.append(f"Domain is very new ({domain_age} days old).")
+            if not tranco_flag:
+                adjustment += 0.05  # Increase probability by 5%
+                reasoning.append("Domain not found in Top 1M Tranco List.")
+
+            adjusted_probability = min(base_probability + adjustment, 1.0)
+
+            probability = adjusted_probability
+
+            if adjusted_probability >= 0.5:
+                final_label = "Phishing (Model Prediction)"
+                reasoning.append(f"Model predicted phishing with adjusted probability {adjusted_probability:.2f}.")
+            else:
+                final_label = "Legitimate (Model Prediction)"
+                reasoning.append(f"Model predicted legitimate with adjusted probability {1 - adjusted_probability:.2f}.")
+
+        # Response
         response = {
-            'prediction': final_prediction,
+            'prediction': final_label,
+            'reasoning': reasoning,
+            'model_probability_phishing': probability,
+            'extracted_features': features,
             'external_checks': {
                 'safe_browsing_detected': safe_browsing_flag,
                 'virustotal_detected': virustotal_flag,
                 'domain_age_days': domain_age,
-                'domain_age_check_success': domain_age
+                'openphish_detected': openphish_flag,
+                'tranco_rank_found': tranco_flag,
             }
         }
 
@@ -211,6 +480,25 @@ def predict():
 
     except Exception as e:
         return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
+
+@app.route('/report_mistake', methods=['POST'])
+def report_mistake():
+    data = request.get_json()
+    url = data.get('url')
+    true_label = data.get('true_label')  # 0 or 1
+    if not url or true_label is None:
+        return jsonify({'error': 'Missing url or true_label.'}), 400
+
+    features = extract_features_dict(url)
+    features['true_label'] = true_label
+
+    df = pd.DataFrame([features])
+    if not os.path.exists('reported_mistakes.csv'):
+        df.to_csv('reported_mistakes.csv', index=False)
+    else:
+        df.to_csv('reported_mistakes.csv', mode='a', header=False, index=False)
+
+    return jsonify({'message': 'Reported successfully.'})
 
 # Run the app
 if __name__ == '__main__':
