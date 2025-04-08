@@ -16,6 +16,13 @@ from utils import extract_features_dict
 from concurrent.futures import ThreadPoolExecutor
 from Utils.whois_lookup import get_whois_details
 from Utils.shodan_lookup import search_shodan
+import tempfile
+import magic
+from PIL import Image
+from PIL.ExifTags import TAGS
+import hashlib
+
+
 
 # Constants
 MODEL_PATH = os.path.join('models', 'final_model.pkl')
@@ -303,32 +310,41 @@ def report_mistake():
         return jsonify({'error': f'Reporting mistake failed: {str(e)}'}), 500
     
 
-@app.route("/api/scan-image", methods=["POST"])
+@app.route("/scan-image", methods=["POST"])
 def scan_image():
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
     file = request.files["file"]
     filename = file.filename
-    filepath = os.path.join("/tmp", filename)
+
+    # Create a secure temporary file
+    temp_dir = tempfile.gettempdir()
+    filepath = os.path.join(temp_dir, filename)
     file.save(filepath)
 
     results = {}
 
-    # 1. Basic file type check
-    mime = magic.from_file(filepath, mime=True)
-    results["mime_type"] = mime
+    try:
+        # 1. Basic file type check
+        mime = magic.from_file(filepath, mime=True)
+        results["mime_type"] = mime
 
-    # 2. Metadata extraction
-    with exiftool.ExifTool() as et:
-        metadata = et.get_metadata(filepath)
-    results["metadata"] = metadata
+        # 2. Metadata extraction using Pillow
+        metadata = {}
+        with Image.open(filepath) as img:
+            info = img._getexif()
+            if info:
+                for tag, value in info.items():
+                    tag_name = TAGS.get(tag, tag)
+                    metadata[tag_name] = value
+        results["metadata"] = metadata or "No metadata found."
 
-    # 3. VirusTotal scan (file hash scan)
-    with open(filepath, "rb") as f:
-        file_data = f.read()
-        file_hash = hashlib.sha256(file_data).hexdigest()
-        
+        # 3. VirusTotal scan (file hash scan)
+        with open(filepath, "rb") as f:
+            file_data = f.read()
+            file_hash = hashlib.sha256(file_data).hexdigest()
+
         vt_url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
         headers = {"x-apikey": VIRUSTOTAL_API_KEY}
         vt_response = requests.get(vt_url, headers=headers)
@@ -337,12 +353,11 @@ def scan_image():
             results["virustotal"] = vt_response.json()
         else:
             results["virustotal"] = "File not found in VT database."
+    
+    finally:
+        os.remove(filepath)  # Clean up temp file
 
-    # 4. (Optional) YARA scanning or steganalysis can be added here
-
-    os.remove(filepath)  # Clean up temp file
     return jsonify(results)
-
 
 # Run the app
 if __name__ == '__main__':
