@@ -301,6 +301,47 @@ def report_mistake():
 
     except Exception as e:
         return jsonify({'error': f'Reporting mistake failed: {str(e)}'}), 500
+    
+
+@app.route("/api/scan-image", methods=["POST"])
+def scan_image():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    filename = file.filename
+    filepath = os.path.join("/tmp", filename)
+    file.save(filepath)
+
+    results = {}
+
+    # 1. Basic file type check
+    mime = magic.from_file(filepath, mime=True)
+    results["mime_type"] = mime
+
+    # 2. Metadata extraction
+    with exiftool.ExifTool() as et:
+        metadata = et.get_metadata(filepath)
+    results["metadata"] = metadata
+
+    # 3. VirusTotal scan (file hash scan)
+    with open(filepath, "rb") as f:
+        file_data = f.read()
+        file_hash = hashlib.sha256(file_data).hexdigest()
+        
+        vt_url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
+        headers = {"x-apikey": VIRUSTOTAL_API_KEY}
+        vt_response = requests.get(vt_url, headers=headers)
+
+        if vt_response.status_code == 200:
+            results["virustotal"] = vt_response.json()
+        else:
+            results["virustotal"] = "File not found in VT database."
+
+    # 4. (Optional) YARA scanning or steganalysis can be added here
+
+    os.remove(filepath)  # Clean up temp file
+    return jsonify(results)
 
 
 # Run the app
