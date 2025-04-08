@@ -303,22 +303,29 @@ def check_google_safe_browsing(api_key, url):
         print(f"Safe Browsing Exception: {e}")
         return False
 
+openphish_cache = None
+last_openphish_fetch_time = None
+
 def check_openphish(url):
+    global openphish_cache, last_openphish_fetch_time
     try:
-        # Fetch the latest OpenPhish feed (public feed)
-        feed_url = "https://openphish.com/feed.txt"
-        response = requests.get(feed_url, timeout=10)
-        if response.status_code == 200:
-            feed_urls = response.text.splitlines()
-            # Normalize the URL (remove trailing slash, lowercase, etc.)
-            normalized_url = url.rstrip('/').lower()
-            return any(normalized_url in line.lower() for line in feed_urls)
-        else:
-            print(f"OpenPhish feed fetch failed: {response.status_code}")
-            return False
+        now = datetime.now()
+        if openphish_cache is None or (now - last_openphish_fetch_time).seconds > 3600:  # refresh every 1 hour
+            feed_url = "https://openphish.com/feed.txt"
+            response = requests.get(feed_url, timeout=10)
+            if response.status_code == 200:
+                openphish_cache = response.text.splitlines()
+                last_openphish_fetch_time = now
+            else:
+                print(f"OpenPhish feed fetch failed: {response.status_code}")
+                return False
+
+        normalized_url = url.rstrip('/').lower()
+        return any(normalized_url in line.lower() for line in openphish_cache)
     except Exception as e:
         print(f"OpenPhish check failed: {e}")
         return False
+
 
 
 def check_virustotal(api_key, url):
