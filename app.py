@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
@@ -211,7 +210,7 @@ def predict():
             domain_age_future = executor.submit(domain_age_in_days, url)
             openphish_future = executor.submit(check_openphish, url)
             tranco_rank_future = executor.submit(check_tranco_rank, url)
-            get_whois_moredetails = executor.submit(get_whois_details, url)
+            whois_future = executor.submit(get_whois_details, url)
             shodan_future = executor.submit(search_shodan, url)
 
             safe_browsing_flag = safe_browsing_future.result()
@@ -219,65 +218,107 @@ def predict():
             domain_age = domain_age_future.result()
             openphish_flag = openphish_future.result()
             tranco_flag = tranco_rank_future.result()
-            moredetails_flag = get_whois_moredetails.result()
+            whois_data = whois_future.result()
             shodan_flag = shodan_future.result()
 
-        reasoning = []
-        external_flags = [safe_browsing_flag, virustotal_flag, openphish_flag]
-        final_label = ""
-        probability = None
+        # Extract detailed WHOIS information
+        whois_details = []
+        if whois_data:
+            whois_details = [
+                f"Domain Name: {whois_data.get('domain_name')}",
+                f"Registrar: {whois_data.get('registrar')}",
+                f"Creation Date: {whois_data.get('creation_date')}",
+                f"Expiration Date: {whois_data.get('expiration_date')}",
+                f"Updated Date: {whois_data.get('updated_date')}",
+                f"Name Servers: {', '.join(whois_data.get('name_servers', [])) if whois_data.get('name_servers') else 'N/A'}"
+            ]
 
-        # External checks first
-        if any(external_flags):
-            final_label = "Phishing (External Verification)"
-            probability = 0.99
-            if safe_browsing_flag:
-                reasoning.append("Detected by Google Safe Browsing.")
-            if virustotal_flag:
-                reasoning.append("Detected as malicious by VirusTotal.")
-            if openphish_flag:
-                reasoning.append("Listed in OpenPhish feed.")
+        # External checks
+        external_checks = [
+            {
+                "name": "Google Safe Browsing",
+                "description": "Checks if the URL is flagged by Google Safe Browsing.",
+                "score": 100 if not safe_browsing_flag else 0,
+                "findings": "No issues detected." if not safe_browsing_flag else "URL flagged as malicious.",
+                "details": ["Google Safe Browsing API returned no threats." if not safe_browsing_flag else "Threat detected by Google Safe Browsing."],
+            },
+            {
+                "name": "VirusTotal",
+                "description": "Checks if the URL is flagged by VirusTotal.",
+                "score": 100 if not virustotal_flag else 0,
+                "findings": "No issues detected." if not virustotal_flag else "URL flagged as malicious.",
+                "details": ["VirusTotal analysis shows no malicious activity." if not virustotal_flag else "Malicious activity detected by VirusTotal."],
+            },
+            {
+                "name": "OpenPhish",
+                "description": "Checks if the URL is listed in the OpenPhish feed.",
+                "score": 100 if not openphish_flag else 0,
+                "findings": "No issues detected." if not openphish_flag else "URL listed in OpenPhish feed.",
+                "details": ["URL not found in OpenPhish feed." if not openphish_flag else "URL found in OpenPhish feed."],
+            },
+        ]
+
+        # Internal checks
+        internal_checks = [
+            {
+                "name": "Domain Age",
+                "description": "Checks the age of the domain in days.",
+                "score": 100 if domain_age > 30 else 50 if domain_age > 0 else 0,
+                "findings": f"Domain age is {domain_age} days." if domain_age > 0 else "Domain age could not be determined.",
+                "details": [f"Domain registered {domain_age} days ago." if domain_age > 0 else "WHOIS data does not provide domain age."],
+            },
+            {
+                "name": "Tranco Rank",
+                "description": "Checks if the domain is in the top 1M Tranco list.",
+                "score": 100 if tranco_flag else 50,
+                "findings": "Domain is in the top 1M Tranco list." if tranco_flag else "Domain is not in the top 1M Tranco list.",
+                "details": ["Domain is ranked in the Tranco list." if tranco_flag else "Domain is not ranked in the Tranco list."],
+            },
+            {
+                "name": "WHOIS Details",
+                "description": "Provides WHOIS details for the domain, including registrar, creation date, expiration date, and name servers.",
+                "score": 100 if whois_data else 50,
+                "findings": "WHOIS details retrieved successfully." if whois_data else "WHOIS details could not be retrieved.",
+                "details": whois_details if whois_details else ["WHOIS data is unavailable."],
+            },
+            {
+                "name": "Shodan Analysis",
+                "description": "Checks the server's reputation using Shodan.",
+                "score": 100 if shodan_flag else 50,
+                "findings": "No suspicious activity detected on the server." if shodan_flag else "Server has suspicious activity.",
+                "details": ["Shodan analysis shows no suspicious activity." if shodan_flag else "Shodan analysis detected suspicious activity."],
+            },
+        ]
+
+        # Combine all checks
+        all_checks = external_checks + internal_checks
+
+        # Calculate overall score
+        overall_score = sum(check["score"] for check in all_checks) // len(all_checks)
+
+        # Determine risk level
+        if overall_score >= 80:
+            risk_level = "Low Risk"
+            summary = "This website appears to be legitimate."
+            recommendation = "You can proceed with caution, but always be vigilant when sharing personal information online."
+        elif overall_score >= 60:
+            risk_level = "Medium Risk"
+            summary = "This website has some suspicious characteristics."
+            recommendation = "Proceed with caution. Verify the website's legitimacy before entering sensitive information."
         else:
-            # No external flags -> rely on model prediction
-            prediction = model.predict(features_df)[0]
-            proba = model.predict_proba(features_df)[0]
-            base_probability = float(proba[1])  # Model phishing probability
-
-            # Adjust probability based on domain age and tranco rank
-            adjustment = 0
-            if domain_age != -1 and domain_age < 30:
-                adjustment += 0.10  # Increase probability by 10%
-                reasoning.append(f"Domain is very new ({domain_age} days old).")
-            if not tranco_flag:
-                adjustment += 0.05  # Increase probability by 5%
-                reasoning.append("Domain not found in Top 1M Tranco List.")
-
-            adjusted_probability = min(base_probability + adjustment, 1.0)
-
-            probability = adjusted_probability
-
-            if adjusted_probability >= 0.5:
-                final_label = "Phishing (Model Prediction)"
-                reasoning.append(f"Model predicted phishing with adjusted probability {adjusted_probability:.2f}.")
-            else:
-                final_label = "Legitimate (Model Prediction)"
-                reasoning.append(f"Model predicted legitimate with adjusted probability {1 - adjusted_probability:.2f}.")
+            risk_level = "High Risk"
+            summary = "This website shows strong signs of being a phishing attempt."
+            recommendation = "Do not proceed. Avoid entering any personal information or credentials on this website."
 
         # Response
         response = {
-            'prediction': final_label,
-            'reasoning': reasoning,
-            'model_probability_phishing': probability,
-            'extracted_features': features,
-            'external_checks': {
-                'safe_browsing_detected': safe_browsing_flag,
-                'virustotal_detected': virustotal_flag,
-                'domain_age_days': domain_age,
-                'openphish_detected': openphish_flag,
-                'tranco_rank_found': tranco_flag,
-                'shodan' : shodan_flag,
-                'whois_moredetails' : moredetails_flag,
-            }
+            "url": url,
+            "summary": summary,
+            "detailedSummary": summary, 
+            "recommendation": recommendation,
+            "riskLevel": risk_level,
+            "overallScore": overall_score,
+            "checks": all_checks,
         }
 
         return jsonify(response)
@@ -347,7 +388,7 @@ def scan_image():
 
         vt_url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
         headers = {"x-apikey": VIRUSTOTAL_API_KEY}
-        vt_response = requests.get(vt_url, headers=headers)
+        vt_response = requests.get(vt_url, headers)
 
         if vt_response.status_code == 200:
             results["virustotal"] = vt_response.json()
