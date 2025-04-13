@@ -16,12 +16,12 @@ from concurrent.futures import ThreadPoolExecutor
 from Utils.whois_lookup import get_whois_details
 from Utils.shodan_lookup import search_shodan
 import tempfile
-import magic
-from PIL import Image
 from PIL.ExifTags import TAGS
-import hashlib
 import numpy as np
-
+import cv2
+from pyzbar.pyzbar import decode
+import easyocr
+import re
 
 
 # Constants
@@ -398,6 +398,7 @@ def report_mistake():
         return jsonify({'error': f'Reporting mistake failed: {str(e)}'}), 500
     
 
+
 @app.route("/scan-image", methods=["POST"])
 def scan_image():
     if "file" not in request.files:
@@ -406,47 +407,118 @@ def scan_image():
     file = request.files["file"]
     filename = file.filename
 
-    # Create a secure temporary file
     temp_dir = tempfile.gettempdir()
     filepath = os.path.join(temp_dir, filename)
     file.save(filepath)
 
-    results = {}
-
     try:
-        # 1. Basic file type check
-        mime = magic.from_file(filepath, mime=True)
-        results["mime_type"] = mime
+        image = cv2.imread(filepath)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-        # 2. Metadata extraction using Pillow
-        metadata = {}
-        with Image.open(filepath) as img:
-            info = img._getexif()
-            if info:
-                for tag, value in info.items():
-                    tag_name = TAGS.get(tag, tag)
-                    metadata[tag_name] = value
-        results["metadata"] = metadata or "No metadata found."
+        # --- TEXT ANALYSIS VIA EasyOCR ---
+        reader = easyocr.Reader(['en'])
+        results = reader.readtext(image)
+        extracted_text = " ".join([text[1] for text in results])
 
-        # 3. VirusTotal scan (file hash scan)
-        with open(filepath, "rb") as f:
-            file_data = f.read()
-            file_hash = hashlib.sha256(file_data).hexdigest()
+        suspicious_keywords = ["urgent", "click here", "verify", "account", "password", "login", "reset", "security"]
+        found_keywords = [kw for kw in suspicious_keywords if kw.lower() in extracted_text.lower()]
+        text_score = 100 - len(found_keywords) * 10
+        text_score = max(40, min(text_score, 100))
 
-        vt_url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
-        headers = {"x-apikey": VIRUSTOTAL_API_KEY}
-        vt_response = requests.get(vt_url, headers)
+        # --- URL DETECTION ---
+        urls = re.findall(r'https?://[^\s\n\r]+', extracted_text)
+        url_score = 90 if not urls else 60
 
-        if vt_response.status_code == 200:
-            results["virustotal"] = vt_response.json()
+        # --- QR CODE DETECTION ---
+        decoded_qr = decode(image)
+        qr_score = 90 if not decoded_qr else 70
+
+        # --- BRAND IMPERSONATION (Basic) ---
+        brand_keywords = ["apple", "amazon", "paypal", "google", "microsoft"]
+        found_brands = [brand for brand in brand_keywords if brand.lower() in extracted_text.lower()]
+        brand_score = 90 if not found_brands else 60
+
+        # --- SOCIAL ENGINEERING DETECTION ---
+        social_keywords = ["limited time", "act now", "only today", "warning", "locked", "compromised"]
+        social_found = [kw for kw in social_keywords if kw.lower() in extracted_text.lower()]
+        social_score = 90 - len(social_found) * 10
+        social_score = max(50, min(social_score, 90))
+
+        # --- FINAL SCORE ---
+        scores = [text_score, url_score, qr_score, brand_score, social_score]
+        overall_score = sum(scores) // len(scores)
+
+        if overall_score < 60:
+            risk_level = "High Risk"
+            summary = "This image likely contains phishing content."
+            recommendation = (
+                "Do not interact with any links, QR codes, or contact information in this image. "
+                "Delete the message and block the sender."
+            )
+        elif overall_score < 80:
+            risk_level = "Medium Risk"
+            summary = "This image has some suspicious characteristics."
+            recommendation = (
+                "Proceed with caution. Verify the sender's identity through official channels before taking any action."
+            )
         else:
-            results["virustotal"] = "File not found in VT database."
-    
+            risk_level = "Low Risk"
+            summary = "This image appears to be safe."
+            recommendation = (
+                "No phishing content detected. Still, always be cautious with messages from unknown sources."
+            )
+
+        checks = [
+            {
+                "name": "Text Analysis",
+                "description": "Examines text in the image for phishing indicators and suspicious language.",
+                "score": text_score,
+                "findings": f"Found {len(found_keywords)} suspicious text indicators." if found_keywords else "No suspicious text detected.",
+                "details": found_keywords or ["All text appears normal."],
+            },
+            {
+                "name": "URL Detection",
+                "description": "Identifies and analyzes URLs present in the image.",
+                "score": url_score,
+                "findings": f"Detected {len(urls)} URLs." if urls else "No URLs detected in text.",
+                "details": urls or ["No links found in the image."],
+            },
+            {
+                "name": "QR Code Analysis",
+                "description": "Detects and analyzes QR codes in the image.",
+                "score": qr_score,
+                "findings": "QR code(s) found and require verification." if decoded_qr else "No QR codes detected.",
+                "details": [qr.data.decode("utf-8") for qr in decoded_qr] or ["No QR data."],
+            },
+            {
+                "name": "Brand Impersonation",
+                "description": "Detects attempts to impersonate trusted brands and services.",
+                "score": brand_score,
+                "findings": f"Brand references found: {found_brands}" if found_brands else "No brand impersonation detected.",
+                "details": found_brands or ["No brand names detected in text."],
+            },
+            {
+                "name": "Social Engineering Indicators",
+                "description": "Identifies social engineering tactics and manipulation techniques.",
+                "score": social_score,
+                "findings": f"Found {len(social_found)} social engineering terms." if social_found else "No urgent or manipulative language detected.",
+                "details": social_found or ["No social engineering patterns found."],
+            },
+        ]
+
+        response = {
+            "summary": summary,
+            "detailedSummary": summary,
+            "recommendation": recommendation,
+            "riskLevel": risk_level,
+            "checks": checks,
+        }
+
+        return jsonify(response)
+
     finally:
-        os.remove(filepath)  # Clean up temp file
-
-    return jsonify(results)
-
+        if os.path.exists(filepath):
+            os.remove(filepath)
 # Run the app
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
