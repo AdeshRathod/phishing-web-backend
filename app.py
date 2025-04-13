@@ -434,7 +434,10 @@ def scan_image():
         qr_score = 90 if not decoded_qr else 70
 
         # --- BRAND IMPERSONATION (Basic) ---
-        brand_keywords = ["apple", "amazon", "paypal", "google", "microsoft"]
+        brand_keywords = [
+            "apple", "amazon", "paypal", "google", "microsoft",  # Global brands
+            "sbi", "icici", "hdfc", "axis bank", "paytm", "phonepe", "flipkart", "airtel", "vi", "jio", "lic", "irctc", "zomato", "swiggy"
+        ]
         found_brands = [brand for brand in brand_keywords if brand.lower() in extracted_text.lower()]
         brand_score = 90 if not found_brands else 60
 
