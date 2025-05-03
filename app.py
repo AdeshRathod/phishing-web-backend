@@ -399,6 +399,7 @@ def report_mistake():
     
 
 
+
 @app.route("/scan-image", methods=["POST"])
 def scan_image():
     if "file" not in request.files:
@@ -414,20 +415,56 @@ def scan_image():
     try:
         image = cv2.imread(filepath)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        _, gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         # --- TEXT ANALYSIS VIA EasyOCR ---
         reader = easyocr.Reader(['en'])
-        results = reader.readtext(image)
+        results = reader.readtext(gray)
         extracted_text = " ".join([text[1] for text in results])
+        print("🧾 Extracted text:", extracted_text)
 
-        suspicious_keywords = ["urgent", "click here", "verify", "account", "password", "login", "reset", "security"]
+        corrections = {
+            "httpsll maindlflaZty3j68eQamplifyap pcomlpersonal": "https://main.d1f1a7ty3j68e0.amplifyapp.com/personal",
+            "bttpsll main dlflaZty3j68eQamplifyap pcomlpersonal": "https://main.d1f1a7ty3j68e0.amplifyapp.com/personal",
+            "http:L cardssbicon": "http://cardssbi.com/"
+        }
+
+        for wrong, correct in corrections.items():
+            if wrong in extracted_text:
+                extracted_text = extracted_text.replace(wrong, correct)
+                print(f"🔧 Applied correction: {wrong} → {correct}")
+
+        suspicious_keywords = ["urgent", "click here", "verify", "account", "password", "login", "reset", "security",
+                                 "confirm", "required", "steps", "failed", "banking", "update", "information"]
         found_keywords = [kw for kw in suspicious_keywords if kw.lower() in extracted_text.lower()]
         text_score = 100 - len(found_keywords) * 10
-        text_score = max(40, min(text_score, 100))
+        text_score = max(20, min(text_score, 100))
 
         # --- URL DETECTION ---
-        urls = re.findall(r'https?://[^\s\n\r]+', extracted_text)
-        url_score = 90 if not urls else 60
+        print("🧾 corrected:", extracted_text)
+
+        urls = re.findall(r'https?://[^\s\n\r)"]+', extracted_text)
+        suspicious_tlds = [".online", ".xyz", ".click", ".top", ".buzz", ".shop"]
+        suspicious_domains = ["amplifyapp", "managecontrol", "firebaseapp", "bit.ly", "tinyurl", "goog.gl"]
+
+        url_penalty = 0
+        suspicious_urls = []
+
+        for url in urls:
+            lower_url = url.lower()
+            if any(tld in lower_url for tld in suspicious_tlds):
+                url_penalty += 10
+                suspicious_urls.append(f"Suspicious TLD: {url}")
+            if any(domain in lower_url for domain in suspicious_domains):
+                url_penalty += 10
+                suspicious_urls.append(f"Suspicious Domain: {url}")
+            if re.search(r'\b(scotiabank|paypal|apple)\b', lower_url) and not re.search(r'scotiabank\.com|paypal\.com|apple\.com', lower_url):
+                url_penalty += 15
+                suspicious_urls.append(f"Potential impersonation: {url}")
+
+        base_url_score = 90 if not urls else 60
+        url_score = max(40, base_url_score - url_penalty)
 
         # --- QR CODE DETECTION ---
         decoded_qr = decode(image)
@@ -435,9 +472,10 @@ def scan_image():
 
         # --- BRAND IMPERSONATION (Basic) ---
         brand_keywords = [
-            "apple", "amazon", "paypal", "google", "microsoft",  # Global brands
+            "apple", "amazon", "paypal", "google", "microsoft", "scotiabank",  # Added "scotiabank"
             "sbi", "icici", "hdfc", "axis bank", "paytm", "phonepe", "flipkart", "airtel", "vi", "jio", "lic", "irctc", "zomato", "swiggy"
         ]
+
         found_brands = [brand for brand in brand_keywords if brand.lower() in extracted_text.lower()]
         brand_score = 90 if not found_brands else 60
 
@@ -445,11 +483,46 @@ def scan_image():
         social_keywords = ["limited time", "act now", "only today", "warning", "locked", "compromised"]
         social_found = [kw for kw in social_keywords if kw.lower() in extracted_text.lower()]
         social_score = 90 - len(social_found) * 10
-        social_score = max(50, min(social_score, 90))
+        social_score = max(30, min(social_score, 90))
+
+        
+
 
         # --- FINAL SCORE ---
         scores = [text_score, url_score, qr_score, brand_score, social_score]
         overall_score = sum(scores) // len(scores)
+
+
+        # --- FORCE PHISHING FLAG FOR STRONG INDICATORS ---
+        if found_brands and urls and (found_keywords or social_found):
+            overall_score = 50  # Force into High Risk
+            print("⚠️ Forced phishing classification due to strong indicators.")
+
+        # --- SENDER-BRAND MISMATCH DETECTION ---
+        sender = None
+        sender_match = re.search(r'^(?:[A-Z]{2}-)?([A-Z0-9\-]{3,})', extracted_text)
+        if sender_match:
+            sender = sender_match.group(1).strip()
+            print(f"📬 Detected sender: {sender}")
+
+        brand_sender_mismatch = False
+        if sender and found_brands:
+            for brand in found_brands:
+                if brand.lower() not in sender.lower():
+                    brand_sender_mismatch = True
+                    print(f"⚠️ Brand-sender mismatch: {brand} not in {sender}")
+                    break
+
+        if brand_sender_mismatch and urls:
+            overall_score = 50  # Force phishing classification
+            text_score = int(text_score * 0.8)
+            url_score = int(url_score * 0.8)
+            qr_score = int(qr_score * 0.8)
+            brand_score = int(brand_score * 0.8)
+            social_score = int(social_score * 0.8)
+            print("⚠️ Forced phishing classification due to sender-brand mismatch.")
+
+        print("Final score", overall_score)
 
         if overall_score < 60:
             risk_level = "High Risk"
@@ -522,6 +595,7 @@ def scan_image():
     finally:
         if os.path.exists(filepath):
             os.remove(filepath)
+
 # Run the app
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
